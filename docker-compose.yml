@@ -1,0 +1,66 @@
+name: jobpair-aloe
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: jobpair-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jobpair}
+      # Required: set in your .env file (see .env.example). No default.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-jobpair}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobpair"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: jobpair-backend
+    environment:
+      # Be explicit about drivers so SQLAlchemy never has to guess.
+      # Constructed from POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB above
+      # so secrets never have to be hardcoded.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      FRONTEND_URL: http://localhost:3000
+      LOG_LEVEL: INFO
+      APP_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ml_models:/app/ml_models
+      - uploads:/app/uploads
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: jobpair-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      # Used by Server Components running inside this container —
+      # `localhost` doesn't resolve to the host from in here.
+      INTERNAL_API_URL: http://backend:8000/api/v1
+      NODE_ENV: production
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+  ml_models:
+  uploads:
